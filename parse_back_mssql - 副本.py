@@ -5,11 +5,14 @@ import re
 #import pymysql
 # import pymssql
 import pandas as pd
+from swifter import swifter
 from tqdm import tqdm
 from utils import check_author_in, get_author_set, my_sort_file, get_lenth
 import os
 import multiprocessing
 import pickle
+
+if not os.path.exists('AI_Export'): os.makedirs('AI_Export')
 
 AI_author_set = get_author_set(['AI'])
 
@@ -31,21 +34,45 @@ def parse_openalex_snapshot_one_file(f_name):
         # 处理每一行的文本内容，这里可以根据需要进行操作
             yield json.loads(line)
 
+
+
+def process_title(title):
+    # 使用正则表达式替换非英文字母字符为空格
+    cleaned_title = re.sub(r'[^a-zA-Z]', ' ', title)
+    # 合并多个连续的空格为一个空格
+    cleaned_title = re.sub(r'\s+', ' ', cleaned_title)
+    # 去除首尾的空格
+    cleaned_title = cleaned_title.strip()
+    # 将结果转换为小写
+    return cleaned_title.lower()
+
+
+def get_all_titles():
+    title_set = set()
+    for file in os.listdir('AI_Export/AI_articles'):
+        df = pd.read_csv(f'AI_Export/AI_articles/{file}', header=0)
+        # print(df.head(5))
+        # print(df.columns)
+        df['文献标题_processed'] = df['文献标题'].swifter.apply(process_title)
+        title_set = title_set | set(df['文献标题_processed'].tolist())
+        
+    return title_set
+
+# 在每个主进程这里，读取一遍
+ALL_TITLE = get_all_titles()
+
 # UPDATE 修改这个函数，变成除了source id 外，还需要根据名称匹配
+# UPDATE 2 work id set 变成 work id 和 source ID title 的 pair，并且保存起来
 def extract_source_work_author(updates_f):
     work_id_set = set()
     author_id_set = set()
     for json_obj in tqdm(parse_openalex_snapshot_one_file(updates_f)):
-        # work_openalex_id = json_obj['id']
+        work_openalex_id = json_obj['id']
+        work_title = process_title(json_obj['title'])
         try:
-            # authors_l = json_obj['authorships']
-            # author_id_l = []
-            # for author in authors_l:
-            #     author_id_l.append(author['author']['id'])  # 拿到了author list
-            sourceInfo = json_obj['primary_location']['source']
+            sourceInfo = json_obj['primary_location']['source']  # 这个是可以确定一定有的
             sid = sourceInfo['id']
             if sid in SOURCE_SET:
-                work_id = json_obj['id']
                 # print(work_id)
                 authors_l = json_obj['authorships']
                 # print(json_obj.keys())
@@ -53,11 +80,19 @@ def extract_source_work_author(updates_f):
                 for author in authors_l:
                     author_id_l.append(author['author']['id'])  # 拿到了author list
                 # print(set(author_id_l))
-                work_id_set.add(work_id)
+                work_id_set.add((work_openalex_id, sid, work_title))
                 author_id_set = author_id_set | set(author_id_l)
-        
-        except Exception as err:
-            pass
+        except Exception as err:  # 说明 获取不到source ID
+            if work_title in ALL_TITLE:  # 如果在我想要的title里面
+                authors_l = json_obj['authorships']
+                # print(json_obj.keys())
+                author_id_l = []
+                for author in authors_l:
+                    author_id_l.append(author['author']['id'])  # 拿到了author list
+                # print(set(author_id_l))
+                work_id_set.add((work_openalex_id, sid, work_title))
+                author_id_set = author_id_set | set(author_id_l)
+                 
     return work_id_set, author_id_set
 
 def merge_dict(d1, d2):
