@@ -60,6 +60,7 @@ def get_all_titles():
 
 # 在每个主进程这里，读取一遍
 ALL_TITLE = get_all_titles()
+print(f'一共有{len(ALL_TITLE)}个通过名称匹配的论文')
 
 # UPDATE 修改这个函数，变成除了source id 外，还需要根据名称匹配
 # UPDATE 2 work id set 变成 work id 和 source ID title 的 pair，并且保存起来
