@@ -1,0 +1,10 @@
+__pycache__/
+.idea/
+AI_Export/
+concepts/
+merged_authors/
+venv/
+works/
+*.csv
+*.xlsx
+works_report_new.txt
