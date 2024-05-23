@@ -55,7 +55,7 @@ def get_all_titles():
         # print(df.columns)
         df['文献标题_processed'] = df['文献标题'].swifter.apply(process_title)
         title_set = title_set | set(df['文献标题_processed'].tolist())
-        
+    title_set = set([item for item in title_set if len(item.split()) > 2]) 
     return title_set
 
 # 在每个主进程这里，读取一遍
@@ -69,7 +69,7 @@ def extract_source_work_author(updates_f):
     author_id_set = set()
     for json_obj in tqdm(parse_openalex_snapshot_one_file(updates_f)):
         work_openalex_id = json_obj['id']
-        work_title = process_title(json_obj['title'])
+        work_title = process_title(str(json_obj['title']))
         try:
             sourceInfo = json_obj['primary_location']['source']  # 这个是可以确定一定有的
             sid = sourceInfo['id']
@@ -84,15 +84,16 @@ def extract_source_work_author(updates_f):
                 work_id_set.add((work_openalex_id, sid, work_title))
                 author_id_set = author_id_set | set(author_id_l)
         except Exception as err:  # 说明 获取不到source ID
-            if work_title in ALL_TITLE:  # 如果在我想要的title里面
+            if work_title in ALL_TITLE:  # 如果在我想要的title里面  # 503 time use，没有的话 438
                 authors_l = json_obj['authorships']
                 # print(json_obj.keys())
                 author_id_l = []
                 for author in authors_l:
                     author_id_l.append(author['author']['id'])  # 拿到了author list
                 # print(set(author_id_l))
-                work_id_set.add((work_openalex_id, sid, work_title))
+                work_id_set.add((work_openalex_id, '', work_title))
                 author_id_set = author_id_set | set(author_id_l)
+            # pass  
                  
     return work_id_set, author_id_set
 
@@ -110,9 +111,11 @@ SOURCE_SET = set(df['Source ID'].tolist())
 print(SOURCE_SET)
 
 if __name__ == '__main__':
+    import time 
+    start = time.time()
     json_data_l = extract_certain_suffix(scan_list('works'), 'txt')
     # print(json_data_l)
-    json_data_l = sorted(json_data_l, key=my_sort_file, reverse=False)  # 排序
+    json_data_l = sorted(json_data_l, key=my_sort_file, reverse=False) # [100:110]  # 排序
     
     # task_queue = multiprocessing.Queue()
     # https://zhuanlan.zhihu.com/p/649520663 根据这个修改为下面这个
@@ -122,7 +125,7 @@ if __name__ == '__main__':
 
     chunkCounter = multiprocessing.Value('i', 0)  # 计数器
     
-    pool = multiprocessing.Pool(50)
+    pool = multiprocessing.Pool(10)
     
     count = 1
     work_id_set, author_id_set = set(), set()
@@ -143,8 +146,4 @@ if __name__ == '__main__':
 
     # extract_source_work_author(r'works\updated_date=2023-09-02\part_000.txt')
 
-
-
-
-
-    
+    print(f'总耗时{(time.time() - start)/3600: .3f} h')
