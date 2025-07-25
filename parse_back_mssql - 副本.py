@@ -48,18 +48,26 @@ def process_title(title):
 
 
 def get_all_titles():
+    # UPDATE 0608: 加入获取 DOI 的部分
+    '''
+    获取到处的论文的doi和title
+    '''
     title_set = set()
+    doi_set = set()
     for file in os.listdir('AI_Export/AI_articles'):
         df = pd.read_csv(f'AI_Export/AI_articles/{file}', header=0)
         # print(df.head(5))
         # print(df.columns)
         df['文献标题_processed'] = df['文献标题'].swifter.apply(process_title)
         title_set = title_set | set(df['文献标题_processed'].tolist())
-    title_set = set([item for item in title_set if len(item.split()) > 2]) 
-    return title_set
+        doi_set = doi_set | set([str(item) for item in df['DOI'].tolist()])
+    # 去除噪音
+    title_set = set([item for item in title_set if len(item.split()) > 3]) 
+    doi_set = set([item for item in doi_set if len(item) > 8]) 
+    return title_set, doi_set
 
 # 在每个主进程这里，读取一遍
-ALL_TITLE = get_all_titles()
+ALL_TITLE, ALL_DOI = get_all_titles()
 print(f'一共有{len(ALL_TITLE)}个通过名称匹配的论文')
 
 # UPDATE 修改这个函数，变成除了source id 外，还需要根据名称匹配
@@ -70,10 +78,18 @@ def extract_source_work_author(updates_f):
     for json_obj in tqdm(parse_openalex_snapshot_one_file(updates_f)):
         work_openalex_id = json_obj['id']
         work_title = process_title(str(json_obj['title']))
+        work_doi = json_obj['doi']
+        try:
+            pub_type = json_obj['type_crossref']
+        except Exception:
+            pub_type = ''
+        if pub_type not in ('journal-article', 'proceedings-article', 'proceedings', 'dissertation'):
+            continue # 不是这四个类型，就跳过
         try:
             sourceInfo = json_obj['primary_location']['source']  # 这个是可以确定一定有的
             sid = sourceInfo['id']
-            if sid in SOURCE_SET:
+            # 加一个条件就可以了
+            if (work_doi is not None and work_doi.replace('https://doi.org/', '') in ALL_DOI) or sid in SOURCE_SET:
                 # print(work_id)
                 authors_l = json_obj['authorships']
                 # print(json_obj.keys())
@@ -115,7 +131,7 @@ if __name__ == '__main__':
     start = time.time()
     json_data_l = extract_certain_suffix(scan_list('works'), 'txt')
     # print(json_data_l)
-    json_data_l = sorted(json_data_l, key=my_sort_file, reverse=False) # [100:110]  # 排序
+    json_data_l = sorted(json_data_l, key=my_sort_file, reverse=False)#[100:110]  # 排序
     
     # task_queue = multiprocessing.Queue()
     # https://zhuanlan.zhihu.com/p/649520663 根据这个修改为下面这个
@@ -125,7 +141,7 @@ if __name__ == '__main__':
 
     chunkCounter = multiprocessing.Value('i', 0)  # 计数器
     
-    pool = multiprocessing.Pool(10)
+    pool = multiprocessing.Pool(59)
     
     count = 1
     work_id_set, author_id_set = set(), set()

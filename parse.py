@@ -15,9 +15,6 @@ CREATE TABLE `works`(
 '''
 
 
-
-
-
 def parse_openalex_snapshot_one_file(f_name):
     '''这个txt文件，应该是每一行是一个json obj'''
     with open(f_name, 'r', encoding='utf-8') as fp:
