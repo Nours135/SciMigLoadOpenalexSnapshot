@@ -220,7 +220,7 @@ def single_extract_one_file(file_path):
     return {'item_l': item_l, 'CN_count': cn_c}
 
 def main_extract_company_papers(folder):
-    file_paths = [item for item in dump_fpath_generator(folder)]
+    file_paths = [item for item in dump_fpath_generator(folder)]  #[150:156]   # DEBUG 50 files for testing
     output_file = 'company_papers.jsonl'
     out_fp = open(output_file, 'w', encoding='utf-8')
     chinese_paper_count = 0

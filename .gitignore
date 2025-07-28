@@ -8,3 +8,5 @@ works/
 *.csv
 *.xlsx
 works_report_new.txt
+*.jsonl
+*.pkl
