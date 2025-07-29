@@ -1,3 +1,8 @@
+
+# 这部分的环境，可以用 CAR
+# query: 国民经济分类
+# document: paper topic
+
 import torch
 import faiss
 import numpy as np
@@ -6,11 +11,12 @@ from sentence_transformers import SentenceTransformer
 import os
 import pickle
 from tqdm import tqdm
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 import pandas as pd
+import json
 
 
-from preprocess.dataloader import load_paper_data
+# from preprocess.dataloader import load_paper_data  # not used
 from utils.gpu_utils import wait_until_gpu_free, select_device, clear_gpu_memory
 
 class PaperEmbedding:
@@ -25,10 +31,10 @@ class PaperEmbedding:
         '''self.model 改为 lazy init，减少显卡占用时间，避免冲突'''
         if self.model is not None:  # 已经 init 过了
             return
-        # device = select_device(self.use_gpu)
-        device = 'cpu'
+        device = select_device(self.use_gpu)
+        # device = 'cpu'
         # device = 'cuda'
-        # wait_until_gpu_free(gpu_id=torch.cuda.device_count()-1, threshold=20, check_interval=20)
+        wait_until_gpu_free(gpu_id=torch.cuda.device_count()-1, threshold=20, check_interval=20)
         self.model = SentenceTransformer("Alibaba-NLP/gte-Qwen2-7B-instruct", trust_remote_code=True,  device=device, model_kwargs={'torch_dtype': torch.float16})
         # In case you want to reduce the maximum length:
         self.model.max_seq_length = 1024
@@ -47,23 +53,14 @@ class PaperEmbedding:
         # https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct
         # https://www.sbert.net/examples/training/prompts/README.html
         self._init_model()
-        retrieval_instruct = "Given a scientific domain as query, retrieve relevant papers that closely related to the domain. Note that the query should be a description and related keywords of the research field. The exact match of tokens does not matter, but the semantic meaning is crucial."
+        retrieval_instruct = "Given a economic domain as query, retrieve relevant papers that closely related to the domain. Note that the query should be the name of the economic field. The exact match of tokens does not matter, but the semantic meaning is crucial."
         self.move_model(select_device(self.use_gpu))
         query_embeddings = self.model.encode(queries, prompt=f"Instruct: {retrieval_instruct}\nQuery: ")
         self.move_model('cpu')
         return query_embeddings
     
-    def embed_query_papers(self, queries: List[Dict[str, str]]):
-        paper_string = [format_embedding_paper_string(query) for query in queries]
-        self._init_model()
-        # retrieval_instruct = ""
-        self.move_model(select_device(self.use_gpu))
-        # import pdb; pdb.set_trace()  # DEBUG paper_string
-        query_embeddings = self.model.encode(paper_string, prompt=f"Instruct: 为检索与该论文内容相似的论文生成向量表示。\nQuery: ")
-        self.move_model('cpu')
-        return query_embeddings
 
-    def embed_paper(self, documents: List[str]):
+    def embed_paper(self, documents: List[str], move_model = True):
         '''
         输入：
             documents: 一个字符串列表，每个字符串代表一个文档
@@ -76,11 +73,13 @@ class PaperEmbedding:
         if len(documents) > 20000:
             print(f"Too many documents to embed ({len(documents)} documents), please reduce the number of documents")
             return None
-        self._init_model()
-        self.move_model(select_device(self.use_gpu))
+        if move_model:
+            self._init_model()
+            self.move_model(select_device(self.use_gpu))
         document_embeddings = self.model.encode(documents)
-        self.move_model('cpu')
-        clear_gpu_memory()
+        if move_model:
+            self.move_model('cpu')
+            clear_gpu_memory()
         return document_embeddings
     
     def move_model(self, to_device):
@@ -138,7 +137,7 @@ class RetrievalEngine:
         print("Building index with metadata...")
         for i in tqdm(range(0, len(documents), batch_size), desc="Building index", total=len(documents) // batch_size, unit="batch"):
             batch_docs = documents[i:i+batch_size]
-            batch_embeddings = self.model.embed_paper([doc for _, doc in batch_docs])
+            batch_embeddings = self.model.embed_paper([doc for _, doc in batch_docs], move_model=False)
 
             # 将批次嵌入加入索引
             self.index.add(batch_embeddings.astype('float32'))  # shape [n_docs, 3584]
@@ -155,32 +154,6 @@ class RetrievalEngine:
         faiss.write_index(self.index, self.index_file)
         print("Index saved.")
 
-    def search_by_paper(self, papers: List[Dict[str, str]], top_k=5000, sim_lower_bound=0.3) -> List[Tuple[str, float]]:
-        query_embeddings = self.model.embed_query_papers(papers)
-        if not isinstance(query_embeddings, np.ndarray):
-            query_embeddings = query_embeddings.nunmpy()
-            
-        # import pdb; pdb.set_trace()
-        # 结果累加用
-        sim_scores = {}  # doc_id -> [similarities]
-
-        for query in query_embeddings:
-            similarities, indices = self.index.search(query.reshape(1, -1).astype('float32'), top_k * 2)
-            for idx, sim in zip(indices[0], similarities[0]):
-                if sim >= sim_lower_bound:
-                    doc_data = self.metadata[idx]
-                    sim_scores.setdefault(doc_data, []).append(sim)
-        # import pdb; pdb.set_trace()
-        # 聚合相似度（这里用平均值）
-        aggregated = [(doc_data, float(np.mean(sims))) for doc_data, sims in sim_scores.items()]
-        # 排序返回
-        aggregated = sorted(aggregated, key=lambda x: x[1], reverse=True)[:top_k]
-        
-        # import pdb; pdb.set_trace()  # DEBUG results
-        if self.if_clear:    
-            self._clear()
-
-        return aggregated
 
     def search(self, query: str, top_k=5000, sim_lower_bound=0.4) -> List[Tuple[str, float]]:
         # 获取查询的嵌入
@@ -252,24 +225,42 @@ class RetrievalEngine:
         # import pdb; pdb.set_trace()  # DEBUG output_df_list
         return pd.DataFrame(output_df_list), output_author_paper_map
 
-def format_embedding_paper_string(paper_data: Dict[str, str]) -> str:
+def format_embedding_paper_string(paper_data: List[Any]) -> List[str]:
     '''
     合并论文的各种信息为一个字符串
     '''
     # 生成用于与研究主题匹配检索的科学论文向量表示。
     output_str = "以下是论文信息："
     keys = [
-        "title",
-        "keywords",
-        "paper journal/conference name",
-        "paper subject",
-        "paper project",
-        "paper institution"
+        "concepts",
+        "keywords"
     ]
-        
-    for key in keys:
-        output_str += f"{key}: {paper_data.get(key, '')}; "
+    # import pdb; pdb.set_trace()  # DEBUG paper_data
+    output_str += f"title: {paper_data.get('title', '')}; "
+    items = [d['display_name'] for d in paper_data.get('concepts', [])]
+    output_str += f"concepts: {', '.join(items)}; "
+    items = [d['keyword'] for d in paper_data.get('keywords', [])]
+    output_str += f"keywords: {', '.join(items)}; "
+    # import pdb; pdb.set_trace()  # DEBUG paper_data
+
     return output_str
+
+
+def load_economic_domain_data(file_path: str) -> Dict[str, str]:
+    df = pd.read_csv(file_path, header=0, encoding='utf-8')
+    # import pdb; pdb.set_trace()  # DEBUG df
+    return {row['Category']: row['Description'] for _, row in df.iterrows()}
+
+
+def load_paper_data(file_path: str) -> Dict[str, Dict[str, str]]:
+    '''input file is a json list'''
+    data = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in tqdm(f):  
+            data.append(json.loads(line.strip()))
+    # import pdb; pdb.set_trace()  
+    paper_data_map = {item['id']: item for item in data}
+    return paper_data_map
 
 def main_embed_paper(output_file='paper_embeddings.index'):
     engine = RetrievalEngine(os.path.join('embedded_data', output_file), embedder_obj=PaperEmbedding())
@@ -279,18 +270,129 @@ def main_embed_paper(output_file='paper_embeddings.index'):
         os.makedirs('embedded_data')
 
     root_dir = os.path.dirname(os.path.abspath(__file__))
-    paper_data_map, author_paper_map, author_data_map = load_paper_data(os.path.join(root_dir, "data/2000-2024论文数据 20250214.xlsx"))
+    paper_data_map = load_paper_data("company_papers.jsonl")
+    # author_paper_map = dict()
     
+    # import pdb; pdb.set_trace()  
+
     engine.build_index({k: format_embedding_paper_string(v) for k, v in paper_data_map.items()})
     # store other dataset
     with open(os.path.join('embedded_data', 'embedding_support_data.pkl'), 'wb') as f:
         pickle.dump({
             'paper_data_map': paper_data_map,
-            'author_paper_map': author_paper_map,
             'embedding_metadata': engine.metadata,
-            'author_data_map': author_data_map
         }, f)
+
+
+def load_economic_domain_data(file_path: str) -> List[Tuple[str, str]]:
+    df = pd.read_csv(file_path, header=0, encoding='utf-8')
+    # import pdb; pdb.set_trace()  # DEBUG  
+    data = []
+    for _, row in df.iterrows():
+        if pd.isna(row['Category']) or pd.isna(row['Description']):
+            continue
+        data.append((row['Category'], row['Description']))
+    return data
+
+
+def main_embed_queries():
+    embeding_model = PaperEmbedding()
     
+    # 创建 embedded_data 文件夹
+    if not os.path.exists('embedded_data'):
+        os.makedirs('embedded_data')
+
+    # 加载经济领域数据
+    economic_domain_data = load_economic_domain_data("extracted_categories.csv")
+
+    # 构建索引
+    domain_embedding = embeding_model.embed_query([b for a, b in economic_domain_data])
+
+    # store other dataset
+    # import pdb; pdb.set_trace()  # DEBUG economic_domain_data
+    with open(os.path.join('embedded_data', 'economic_domain_embedding.pkl'), 'wb') as f:
+        pickle.dump({
+            'economic_domain_data': economic_domain_data,
+            'economic_domain_embedding': domain_embedding,
+        }, f)
+
+
+def main_find_economic_domain():
+    '''查找论文及其对应的经济领域'''
+    # 加载经济领域的嵌入
+    with open(os.path.join('embedded_data', 'economic_domain_embedding.pkl'), 'rb') as f:
+        economic_domain_data = pickle.load(f)
+    print('economic_domain_embedding.pkl loaded')
+    
+    # 加载 faiss index & paper metadata
+    index = faiss.read_index(os.path.join('embedded_data', 'paper_embeddings.index'))
+    with open(os.path.join('embedded_data', 'embedding_support_data.pkl'), 'rb') as f:  
+        paper_meta = pickle.load(f)
+    # import pdb; pdb.set_trace()  # DEBUG paper_data_map
+    print('embedding_support_data.pkl loaded')
+    
+    
+    # 读取 faiss index 到 numpy
+    index_np = index.reconstruct_n(0, index.ntotal)  # shape: (n_papers, d)
+
+    # 计算余弦相似度
+    query_embeddings = economic_domain_data['economic_domain_embedding']  # shape [n_domains, d]
+    similarities = np.dot(index_np, query_embeddings.T)  # shape [n_papers, n_domains]
+    
+    print('similarities computed')
+
+    # find best matched domain for each paper
+    best_matched_domains = np.argmax(similarities, axis=1)  # shape
+    best_matched_scores = np.max(similarities, axis=1)  # shape
+
+    # format output excel
+    df_data = []
+    keys = ['id', 'doi', 'title', 'publication_date', 'concepts', 'keywords']
+    for i in range(len(best_matched_domains)):  # for each paper 
+        paper_id = paper_meta['embedding_metadata'][i]
+        paper_full_info = paper_meta['paper_data_map'][paper_id]
+        domain_id, domain_name = economic_domain_data['economic_domain_data'][best_matched_domains[i]]
+        score = best_matched_scores[i]
+        
+        tmp = {
+            'domain_id': domain_id,
+            'domain_name': domain_name,
+            'similarity_score': score
+        }
+
+        # import pdb; pdb.set_trace()  # DEBUG paper_full_info
+
+        for key in keys:
+            if key in paper_full_info:
+                tmp[key] = paper_full_info[key]
+            else:
+                tmp[key] = 'N/A'
+        # process authorships
+        authorships = paper_full_info.get('authorships', [])
+        first_author = []
+        other_authors = []
+        for author in authorships:
+            if author.get('author_position', '') == 'first':
+                first_author.append(author)
+            else:
+                other_authors.append(author)
+
+        tmp['first_author'] = json.dumps(first_author) if first_author else 'N/A'
+        tmp['other_authors'] = json.dumps(other_authors) if other_authors else 'N/A'
+
+        # import pdb; pdb.set_trace()  # DEBUG paper_full_info
+        df_data.append(tmp)
+    
+    print('excel generated')
+    df = pd.DataFrame(df_data, columns=['domain_id', 'domain_name', 'similarity_score'] + keys + ['first_author', 'other_authors'])
+    # import pdb; pdb.set_trace()
+    df.to_excel('eco_domain_match_res.xlsx')
 
 if __name__ == "__main__":
-    main_embed_paper('paper_embeddings.index')
+    # testing
+    # data = load_paper_data('company_papers.jsonl')    
+    # format_embedding_paper_string(data[0])
+
+    # main_embed_paper('paper_embeddings.index')   # 这边好像出现了失误 paper 的 meta 对应出了问题
+    # main_embed_queries()    # 检查了下，index 的顺序可以保证
+    main_find_economic_domain()

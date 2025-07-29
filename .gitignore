@@ -10,3 +10,5 @@ works/
 works_report_new.txt
 *.jsonl
 *.pkl
+*.pdf
+*.index
