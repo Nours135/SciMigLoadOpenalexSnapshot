@@ -4,6 +4,7 @@ from tqdm import tqdm
 # 在自动下载完后自动解压
 
 
+
 def scan_list(path):
     '''输入文件夹路径
     输出列表，包含文件夹里的所有文件
@@ -47,11 +48,12 @@ def decompress_gz_files(file_list):
                 # 写入解压后的内容到新文件
                 with open(output_file_path + '.txt', 'wb') as f_out:
                     f_out.write(file_content)
-            #print(f"文件已解压：{file_path} -> {output_file_path}")
+            print(f"文件已解压：{file_path} -> {output_file_path}")
+            os.remove(file_path)  # 删除原始的.gz文件
         #else:
             #print(f"跳过非.gz文件：{file_path}")
 
 if __name__ == '__main__':
     # print(*scan_list('authors'), sep='\n')
-    gz_l = scan_list('merged_authors')
+    gz_l = scan_list('works')  # 扫描文件夹，获取所有文件
     decompress_gz_files(gz_l)
