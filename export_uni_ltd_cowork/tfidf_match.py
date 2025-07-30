@@ -6,9 +6,11 @@ import pandas as pd
 import os
 import re
 import pickle
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 import numpy as np
 from collections import Counter
+from tqdm import tqdm
+
 
 
 def clean_text(text: str) -> str:
@@ -18,6 +20,27 @@ def clean_text(text: str) -> str:
     text = text.lower()  # 转为小写
     return text
 
+
+def get_tokenized_text_from_full_openalex_json(cur_paper_full_info: Dict[str, Any]) -> List[str]:
+    tmp = []
+    if 'title' in cur_paper_full_info and cur_paper_full_info['title']:
+        tmp += clean_text(cur_paper_full_info['title']).split(" ")  # List of tokens 
+    # concat abstract
+    if 'abstract_inverted_index' in cur_paper_full_info and cur_paper_full_info['abstract_inverted_index']:
+        for token, inverted_index in cur_paper_full_info['abstract_inverted_index'].items():
+            tmp += [clean_text(token)] * len(inverted_index)   
+    # concat keywords
+    if 'keywords' in cur_paper_full_info and cur_paper_full_info['keywords']:
+        tmp += [item['keyword'] for item in cur_paper_full_info['keywords']]
+    # concat concepts
+    if 'concepts' in cur_paper_full_info and cur_paper_full_info['concepts']:
+        tmp += [item['display_name'] for item in cur_paper_full_info['concepts']]
+    # concat mesh
+    if 'mesh' in cur_paper_full_info and cur_paper_full_info['mesh']:
+        # import pdb; pdb.set_trace()
+        tmp += [item['descriptor_name'] if item['qualifier_name'] is None else item['descriptor_name'] + ' ' + item['qualifier_name'] for item in cur_paper_full_info['mesh']]
+
+    return tmp
 
 
 def load_bm25_corpus():
@@ -32,6 +55,7 @@ def load_bm25_corpus():
         for line in f:
             data = json.loads(line.strip())
             paper_id_2_full_info[data['id']] = data
+            # import pdb; pdb.set_trace()  # debug sampled papers
 
     # load all paper into a list
     paper_index_2_paper_id = list(paper_id_2_full_info.keys())    # index -> paper_id
@@ -40,25 +64,7 @@ def load_bm25_corpus():
     for paper_id in paper_index_2_paper_id:
         cur_paper_full_info = paper_id_2_full_info[paper_id]
         # 论文的篇关摘
-        tmp = []
-        if 'title' in cur_paper_full_info and cur_paper_full_info['title']:
-            tmp += clean_text(cur_paper_full_info['title']).split(" ")  # List of tokens 
-        # concat abstract
-        if 'abstract_inverted_index' in cur_paper_full_info and cur_paper_full_info['abstract_inverted_index']:
-            for token, inverted_index in cur_paper_full_info['abstract_inverted_index'].items():
-                tmp += [clean_text(token)] * len(inverted_index)   
-        # concat keywords
-        if 'keywords' in cur_paper_full_info and cur_paper_full_info['keywords']:
-            tmp += [item['keyword'] for item in cur_paper_full_info['keywords']]
-        # concat concepts
-        if 'concepts' in cur_paper_full_info and cur_paper_full_info['concepts']:
-            tmp += [item['display_name'] for item in cur_paper_full_info['concepts']]
-        # concat mesh
-        if 'mesh' in cur_paper_full_info and cur_paper_full_info['mesh']:
-            # import pdb; pdb.set_trace()
-            tmp += [item['descriptor_name'] if item['qualifier_name'] is None else item['descriptor_name'] + ' ' + item['qualifier_name'] for item in cur_paper_full_info['mesh']]
-        
-        paper_document_l.append(tmp)
+        paper_document_l.append(get_tokenized_text_from_full_openalex_json(cur_paper_full_info))
         # import pdb; pdb.set_trace()
 
 
@@ -72,20 +78,30 @@ def load_bm25_corpus():
 
     return paper_id_2_eco_code, paper_index_2_paper_id, paper_document_l
 
-# def main_generate_document_obj(reload = False):
-#     paper_id_2_eco_code, paper_index_2_paper_id, paper_document_l = load_bm25_corpus()
+def sample_paper_from_openalex(file_path: str, sample_size: int = 1000):
+    '''
+    从 openalex 的数据集中随机抽取 sample_size 个论文
+    '''
+    from find_company_paper import is_CN
+    paper_id_2_full_info = dict()
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in tqdm(f):
+            item = json.loads(line.strip())
+            for author_d in item.get('authorships', []):
+                if author_d['author_position'] == 'first':
+                    if is_CN(author_d):  # only process Chinese papers
+                        paper_id_2_full_info[item['id']] = item
+                        break
+                    else:
+                        continue
+            
 
-#     if not reload and os.path.exists('bm25_documents.json'):
-#         with open('BM25Okapi_obj.pkl', 'rb') as f:
-#             bm25 = pickle.load(f)
-#         return bm25, paper_index_2_paper_id, paper_id_2_eco_code
+    sampled_paper_ids = np.random.choice(list(paper_id_2_full_info.keys()), size=sample_size, replace=False)
+    sampled_papers = [paper_id_2_full_info[paper_id] for paper_id in sampled_paper_ids]   # current full info
+
+    # get string
     
-#     # 生成 BM25 的 documents
-#     bm25 = BM25Okapi(paper_document_l)
-#     # 保存到文件
-#     with open('BM25Okapi_obj.pkl', 'wb') as f:
-#         pickle.dump(bm25, f)
-#     return bm25, paper_index_2_paper_id, paper_id_2_eco_code
+    return [get_tokenized_text_from_full_openalex_json(item) for item in sampled_papers]
 
 class Retriever():
     def __init__(self, reload = False):
@@ -106,11 +122,12 @@ class Retriever():
                 pickle.dump(self.bm25, f)
         
         # use mean similarity
-        # self.eco_code_2_count = Counter(paper_id_2_eco_code.values())
+        self.eco_code_2_count = Counter(paper_id_2_eco_code.values())
+        self.beta = 0.4
         # import pdb ; pdb.set_trace()  # debug count stats
 
 
-    def retrieve(self, tokenized_query: List[str], top_n=500):
+    def retrieve(self, tokenized_query: List[str], top_n=50):
         '''
         实际上是一个基于 BM25 相似度计算的 KNN
         '''
@@ -130,21 +147,28 @@ class Retriever():
                 result[eco_code] = 0
             result[eco_code] += score
         
+        # for eco_code in result:
+        #     result[eco_code] /= eco_code_2_count[eco_code]
         for eco_code in result:
-            result[eco_code] /= eco_code_2_count[eco_code]
-            
-        import pdb; pdb.set_trace()
-        return result   
+            result[eco_code] /= self.eco_code_2_count[eco_code] ** self.beta
+
+        # result = eco_code_2_count     # use majority vote
+        
+        # import pdb; pdb.set_trace()
+        # print(sorted(result.items(), key=lambda x: x[1], reverse=True)[:10])  # print top 10 results
+        # import pdb; pdb.set_trace()
+        return sorted(result.items(), key=lambda x: x[1], reverse=True)[:2]     # top 2 results
 
 
 
 
 if __name__ == '__main__':
     # main_generate_document_obj()
-    retriever = Retriever(reload=True)
-    query = "machine learning in healthcare"
+    retriever = Retriever(reload=False)
+    sampled_papers = sample_paper_from_openalex('../works/updated_date=2024-02-10/part_000.txt', sample_size=100)
 
-    retriever.retrieve(query.split(" "))
+    import pdb; pdb.set_trace()  # debug sampled papers
+    res = retriever.retrieve(sampled_papers[0], top_n=100)  # retrieve the first sampled paper
 
 
 
