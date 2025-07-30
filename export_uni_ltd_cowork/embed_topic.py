@@ -55,7 +55,8 @@ class PaperEmbedding:
         self._init_model()
         retrieval_instruct = "Given a economic domain as query, retrieve relevant papers that closely related to the domain. Note that the query should be the name of the economic field. The exact match of tokens does not matter, but the semantic meaning is crucial."
         self.move_model(select_device(self.use_gpu))
-        query_embeddings = self.model.encode(queries, prompt=f"Instruct: {retrieval_instruct}\nQuery: ")
+        # import pdb; pdb.set_trace()  # DEBUG queries
+        query_embeddings = self.model.encode(queries, prompt=f"Instruct: {retrieval_instruct}\nQuery: ", batch_size=4, show_progress_bar=True)
         self.move_model('cpu')
         return query_embeddings
     
@@ -286,12 +287,13 @@ def main_embed_paper(output_file='paper_embeddings.index'):
 
 def load_economic_domain_data(file_path: str) -> List[Tuple[str, str]]:
     df = pd.read_csv(file_path, header=0, encoding='utf-8')
-    # import pdb; pdb.set_trace()  # DEBUG  
+    # import pdb; pdb.set_trace()  # DEBUG, fields 
     data = []
     for _, row in df.iterrows():
-        if pd.isna(row['Category']) or pd.isna(row['Description']):
+        if pd.isna(row['Category']) or pd.isna(row['Name']):
             continue
-        data.append((row['Category'], row['Description']))
+        data.append((row['Category'], row['Name'], f"Economic domain name: {row['Name']}, some related techniques (not exclusive): {row['Description']}"))
+    # import pdb; pdb.set_trace()
     return data
 
 
@@ -306,7 +308,7 @@ def main_embed_queries():
     economic_domain_data = load_economic_domain_data("extracted_categories.csv")
 
     # 构建索引
-    domain_embedding = embeding_model.embed_query([b for a, b in economic_domain_data])
+    domain_embedding = embeding_model.embed_query([full_desc for code, name, full_desc in economic_domain_data])
 
     # store other dataset
     # import pdb; pdb.set_trace()  # DEBUG economic_domain_data
@@ -351,7 +353,7 @@ def main_find_economic_domain():
     for i in range(len(best_matched_domains)):  # for each paper 
         paper_id = paper_meta['embedding_metadata'][i]
         paper_full_info = paper_meta['paper_data_map'][paper_id]
-        domain_id, domain_name = economic_domain_data['economic_domain_data'][best_matched_domains[i]]
+        domain_id, domain_name, full_desc = economic_domain_data['economic_domain_data'][best_matched_domains[i]]
         score = best_matched_scores[i]
         
         tmp = {
@@ -393,6 +395,6 @@ if __name__ == "__main__":
     # data = load_paper_data('company_papers.jsonl')    
     # format_embedding_paper_string(data[0])
 
-    # main_embed_paper('paper_embeddings.index')   # 这边好像出现了失误 paper 的 meta 对应出了问题
-    # main_embed_queries()    # 检查了下，index 的顺序可以保证
+    # main_embed_paper('paper_embeddings.index')   # engine.metadata 就是对应的东西 
+    main_embed_queries()    # 检查了下，index 的顺序可以保证
     main_find_economic_domain()
