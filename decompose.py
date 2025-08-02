@@ -48,9 +48,10 @@ def decompress_gz_files(file_list):
                 # 写入解压后的内容到新文件
                 with open(output_file_path + '.txt', 'wb') as f_out:
                     f_out.write(file_content)
-            print(f"文件已解压：{file_path} -> {output_file_path}")
+            print(f"文件已解压：{file_path} -> {output_file_path}.txt")
             os.remove(file_path)  # 删除原始的.gz文件
-        #else:
+        #else:.
+        
             #print(f"跳过非.gz文件：{file_path}")
 
 if __name__ == '__main__':

@@ -52,6 +52,7 @@ def process_single_dump(file_path: str) -> Generator[Dict[str, Any], None, None]
     '''
     处理单个 dump 文件，提取出需要的信息
     '''
+    print(f"Processing {file_path}")
     retriever = Retriever(reload=False)
     results = []
     for item in load_one_dump_file(file_path):
@@ -81,7 +82,7 @@ def process_single_dump(file_path: str) -> Generator[Dict[str, Any], None, None]
 
 
 def main_get_all_CN_university_papers(folder, max_workers: int = 5):
-    file_paths = [item for item in dump_fpath_generator(folder)]  #[150:156]   # DEBUG 50 files for testing
+    file_paths = [item for item in dump_fpath_generator(folder)][::-1]  #[150:156]   # DEBUG 50 files for testing
     output_file = 'university_papers.csv'
     out_fp = open(output_file, 'w', encoding='utf-8')
     

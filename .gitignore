@@ -12,3 +12,6 @@ works_report_new.txt
 *.pkl
 *.pdf
 *.index
+*.gz
+*.html
+openalex-snapshot/*
