@@ -31,7 +31,8 @@ def get_tokenized_text_from_full_openalex_json(cur_paper_full_info: Dict[str, An
             tmp += [clean_text(token)] * len(inverted_index)   
     # concat keywords
     if 'keywords' in cur_paper_full_info and cur_paper_full_info['keywords']:
-        tmp += [item['keyword'] for item in cur_paper_full_info['keywords']]
+        # import pdb; pdb.set_trace()
+        tmp += [item.get('keyword', '') for item in cur_paper_full_info['keywords']]   # make it safer
     # concat concepts
     if 'concepts' in cur_paper_full_info and cur_paper_full_info['concepts']:
         tmp += [item['display_name'] for item in cur_paper_full_info['concepts']]

@@ -119,9 +119,9 @@ def main_get_all_CN_university_papers(folder, max_workers: int = 5):
 
 
 if __name__ == '__main__':
-    main_get_all_CN_university_papers('../works', max_workers=10)
+    main_get_all_CN_university_papers('../works', max_workers=13)
 
 
     # test single
-    # file_path = '../works/updated_date=2024-02-10/part_000.txt'
+    # file_path = '../works/updated_date=2025-04-20/part_000.txt'
     # single_results = process_single_dump(file_path)
